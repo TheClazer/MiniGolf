@@ -43,13 +43,21 @@ This project is part of **CloneFest 2025 — Reimagining a C-based Minigolf Clas
 
 MiniGolf/
 ├── public/
+
 │   └── assets/
+
 │       └── hole1.glb         # 3D course model
+
 ├── src/
+
 │   └── main.js               # Core game logic
+
 ├── index.html
+
 ├── package.json
+
 ├── vite.config.js
+
 └── README.md
 
 ````
