@@ -1,0 +1,14 @@
+html,body {
+  height:100%;
+  margin:0;
+  overflow:hidden;
+  background:#87ceeb;
+}
+#hud {
+  position:absolute;
+  left:12px;
+  top:12px;
+  color:#fff;
+  font-family:Arial,Helvetica,sans-serif;
+  z-index:10;
+}
