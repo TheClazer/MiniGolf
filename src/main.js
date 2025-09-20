@@ -21,11 +21,10 @@ const PICKER_SCALE = 4.0;
 // additional screen-space tolerance in pixels as fallback
 const SCREEN_TOLERANCE_PX = 80;
 
-const LEVELS = ['hole1.glb', 'hole2.glb'];
+const LEVELS = ['hole1.glb', 'hole2.glb', 'hole3.glb'];
 let currentLevelIndex = 0;
 
 const scene = new THREE.Scene();
-// darker sky to match mood
 scene.background = new THREE.Color(0x7faed6);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 1000);
@@ -187,6 +186,12 @@ function loadLevel(index, restart = false) {
     // compute completion radius optionally per-level (keeps stable behavior)
     holeCompleteRadius = Math.max(HOLE_RADIUS + HOLE_COMPLETE_MARGIN, HOLE_RADIUS * 0.9);
 
+    // increase sensitivity for level 1 (index 0) so near-misses count
+    if (index === 0) {
+      holeCompleteRadius = Math.max(holeCompleteRadius, HOLE_RADIUS + 0.12);
+      console.log('Level 1: increased hole complete radius to', holeCompleteRadius.toFixed(3));
+    }
+
     createBallIfNeeded();
 
     // place ball at start and snap to visible surface under start
@@ -223,6 +228,8 @@ const clock = new THREE.Clock();
 let grounded = false;
 let groundNormal = new THREE.Vector3(0, 1, 0);
 let courseBounds = null;
+// flag used to reduce friction when on steep/loop surfaces to help climbing
+let onSteepSurface = false;
 function computeCourseBounds() { if (!courseScene) return; courseBounds = new THREE.Box3().setFromObject(courseScene); }
 
 function onLose() {
@@ -270,7 +277,7 @@ function getMouseGroundIntersection(clientX, clientY, y = 0) {
   return p;
 }
 
-// improved hit test: ray intersects invisible larger picker, or screen-space distance to ball center is small
+// improved hit test: ray intersects invisible larger picker, screen-space distance, or ground-projected tolerance up to ball diameter
 function pointerHitsBall(clientX, clientY) {
   if (!ballPicker || !ballMesh) return false;
   const mouse = new THREE.Vector2((clientX / window.innerWidth) * 2 - 1, -(clientY / window.innerHeight) * 2 + 1);
@@ -287,7 +294,17 @@ function pointerHitsBall(clientX, clientY) {
   const dx = screenX - clientX;
   const dy = screenY - clientY;
   const distPx = Math.sqrt(dx * dx + dy * dy);
-  return distPx <= SCREEN_TOLERANCE_PX;
+  if (distPx <= SCREEN_TOLERANCE_PX) return true;
+
+  // world-space ground-projected check. This allows pulling from near the ball even if projection misses.
+  const groundPoint = getMouseGroundIntersection(clientX, clientY, ballMesh.position.y);
+  if (!groundPoint) return false;
+  const horiz = new THREE.Vector3(groundPoint.x - ballMesh.position.x, 0, groundPoint.z - ballMesh.position.z);
+  const horizDist = horiz.length();
+  // allow up to ball diameter away and still count as pointer-on-ball
+  if (horizDist <= BALL_RADIUS * 2.0 + 0.0001) return true;
+
+  return false;
 }
 
 renderer.domElement.addEventListener('pointerdown', (e) => {
@@ -295,6 +312,10 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
   if (velocity.length() > STOP_THRESHOLD) return;
   if (!grounded) return;
   if (!pointerHitsBall(e.clientX, e.clientY)) return;
+
+  // prevent OrbitControls from stealing the interaction and lock this pointer to the canvas
+  try { renderer.domElement.setPointerCapture(e.pointerId); } catch (err) {}
+  e.preventDefault();
 
   isAiming = true;
   activePointerId = e.pointerId;
@@ -340,6 +361,10 @@ renderer.domElement.addEventListener('pointermove', (e) => {
 
 renderer.domElement.addEventListener('pointerup', (e) => {
   if (activePointerId !== null && e.pointerId !== activePointerId) return;
+
+  // release pointer capture
+  try { renderer.domElement.releasePointerCapture(e.pointerId); } catch (err) {}
+
   if (isAiming && ballMesh) {
     isAiming = false;
     activePointerId = null;
@@ -358,6 +383,16 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   } else {
     activePointerId = null;
     isAiming = false;
+    controls.enabled = true;
+    if (aimLine) { if (aimLine.geometry) aimLine.geometry.dispose(); if (aimLine.material) aimLine.material.dispose(); scene.remove(aimLine); aimLine = null; }
+  }
+});
+
+renderer.domElement.addEventListener('pointercancel', (e) => {
+  if (activePointerId === e.pointerId) {
+    try { renderer.domElement.releasePointerCapture(e.pointerId); } catch (err) {}
+    isAiming = false;
+    activePointerId = null;
     controls.enabled = true;
     if (aimLine) { if (aimLine.geometry) aimLine.geometry.dispose(); if (aimLine.material) aimLine.material.dispose(); scene.remove(aimLine); aimLine = null; }
   }
@@ -422,6 +457,10 @@ function resolveSphereVsMeshTriangles(mesh) {
       if (distSq < BALL_RADIUS * BALL_RADIUS) {
         collided = true;
         triNormal.crossVectors(v1.clone().sub(v0), v2.clone().sub(v0)).normalize();
+        // steep surface handling (help loops climb)
+        const isSteep = triNormal.y <= 0.6;
+        if (isSteep) onSteepSurface = true;
+
         if (triNormal.y > 0.6) {
           const depth = BALL_RADIUS - Math.sqrt(distSq);
           ballMesh.position.add(triNormal.clone().multiplyScalar(depth + 0.001));
@@ -433,6 +472,7 @@ function resolveSphereVsMeshTriangles(mesh) {
           }
           grounded = true;
         } else {
+          // non-flat collision. bounce or slide.
           const vDot = velocity.dot(triNormal);
           if (vDot < 0) {
             const vNormal = triNormal.clone().multiplyScalar(vDot);
@@ -442,6 +482,25 @@ function resolveSphereVsMeshTriangles(mesh) {
           } else {
             velocity.multiplyScalar(0.995);
           }
+
+          // assist climbing on loops for level 3: small tangential boost when moving up the loop
+          if (currentLevelIndex === 2 && isSteep) {
+            // tangent along surface direction of motion
+            const tangent = velocity.clone().projectOnPlane(triNormal);
+            const tangentLen = tangent.length();
+            if (tangentLen > 0.001) {
+              const uphillDir = new THREE.Vector3().crossVectors(triNormal, new THREE.Vector3(0, 1, 0)).cross(triNormal).normalize();
+              // measure if moving generally uphill relative to loop local up
+              const uphillDot = tangent.clone().normalize().dot(uphillDir);
+              // only boost if there's forward motion and it's partly uphill
+              if (velocity.length() > 0.05 && uphillDot > -0.2) {
+                // boost magnitude scales with how steep the surface is (steeper => more assist)
+                const boost = 0.25 * (1.0 - triNormal.y);
+                velocity.add(tangent.clone().normalize().multiplyScalar(boost));
+              }
+            }
+          }
+
           const penetration = BALL_RADIUS - Math.sqrt(distSq) || 0.0001;
           ballMesh.position.add(triNormal.clone().multiplyScalar(penetration + 0.001));
           grounded = false;
@@ -460,6 +519,9 @@ function resolveSphereVsMeshTriangles(mesh) {
       if (distSq < BALL_RADIUS * BALL_RADIUS) {
         collided = true;
         triNormal.crossVectors(v1.clone().sub(v0), v2.clone().sub(v0)).normalize();
+        const isSteep = triNormal.y <= 0.6;
+        if (isSteep) onSteepSurface = true;
+
         if (triNormal.y > 0.6) {
           const depth = BALL_RADIUS - Math.sqrt(distSq);
           ballMesh.position.add(triNormal.clone().multiplyScalar(depth + 0.001));
@@ -480,6 +542,20 @@ function resolveSphereVsMeshTriangles(mesh) {
           } else {
             velocity.multiplyScalar(0.995);
           }
+
+          if (currentLevelIndex === 2 && isSteep) {
+            const tangent = velocity.clone().projectOnPlane(triNormal);
+            const tangentLen = tangent.length();
+            if (tangentLen > 0.001) {
+              const uphillDir = new THREE.Vector3().crossVectors(triNormal, new THREE.Vector3(0, 1, 0)).cross(triNormal).normalize();
+              const uphillDot = tangent.clone().normalize().dot(uphillDir);
+              if (velocity.length() > 0.05 && uphillDot > -0.2) {
+                const boost = 0.25 * (1.0 - triNormal.y);
+                velocity.add(tangent.clone().normalize().multiplyScalar(boost));
+              }
+            }
+          }
+
           const penetration = BALL_RADIUS - Math.sqrt(distSq) || 0.0001;
           ballMesh.position.add(triNormal.clone().multiplyScalar(penetration + 0.001));
           grounded = false;
@@ -495,6 +571,9 @@ function resolveSphereVsMeshTriangles(mesh) {
 function physicsStep(dt) {
   if (!ballMesh) return;
   dt = Math.min(MAX_DT, dt);
+
+  // reset steep surface flag each step; resolveTriangle may set it true.
+  onSteepSurface = false;
 
   if (ballPicker) ballPicker.position.copy(ballMesh.position);
 
@@ -536,7 +615,9 @@ function physicsStep(dt) {
   const horiz = new THREE.Vector3(velocity.x, 0, velocity.z);
   const speed = horiz.length();
   if (speed > 0) {
-    const newSpeed = Math.max(0, speed - FRICTION * dt);
+    // reduce friction when on steep surfaces to help climbing loops
+    const frictionThisStep = onSteepSurface ? FRICTION * 0.35 : FRICTION;
+    const newSpeed = Math.max(0, speed - frictionThisStep * dt);
     if (newSpeed < STOP_THRESHOLD) { velocity.x = 0; velocity.z = 0; }
     else { horiz.setLength(newSpeed); velocity.x = horiz.x; velocity.z = horiz.z; }
   }
@@ -553,14 +634,29 @@ function physicsStep(dt) {
     console.log('SCORED');
   }
 
-  // hole_end completion using a minimal distance threshold so flag poles cannot block finishing
+  // hole_end completion using improved high-speed capture logic
   if (holeEnd && !levelCompletePending) {
     const dx = ballMesh.position.x - holeEnd.x;
     const dz = ballMesh.position.z - holeEnd.z;
     const horizDist = Math.hypot(dx, dz);
-    const SPEED_THRESHOLD = 0.9; // allow small motion but not high-speed flybys
 
-    if (horizDist <= holeCompleteRadius && velocity.length() < SPEED_THRESHOLD) {
+    // horizontal velocity and direction toward hole
+    const horizVel = new THREE.Vector3(velocity.x, 0, velocity.z);
+    const speedHoriz = horizVel.length();
+    const dirToHole = new THREE.Vector3(holeEnd.x - ballMesh.position.x, 0, holeEnd.z - ballMesh.position.z);
+    const dirLen = dirToHole.length();
+    const dirNorm = dirLen > 0.0001 ? dirToHole.clone().normalize() : new THREE.Vector3(0, 0, 0);
+    const approachDot = horizVel.dot(dirNorm); // >0 means moving toward hole
+
+    // thresholds (tune if needed)
+    const SPEED_THRESHOLD = 0.9;            // slow capture threshold
+    const OVERRIDE_FACTOR = 1.2;            // slightly larger radius to override pole collisions
+    const MIN_APPROACH_DOT = 0.25;          // require some component of velocity toward the hole to override
+
+    if (
+      (horizDist <= holeCompleteRadius && speedHoriz < SPEED_THRESHOLD) ||
+      (horizDist <= holeCompleteRadius * OVERRIDE_FACTOR && approachDot > MIN_APPROACH_DOT)
+    ) {
       levelCompletePending = true;
       velocity.set(0, 0, 0);
       // visually place ball near hole center (but don't attempt to pass through flag)
@@ -569,7 +665,7 @@ function physicsStep(dt) {
       // place ball slightly above the hole surface point so it is visible
       ballMesh.position.y = (holeEnd.y || ballMesh.position.y) + BALL_RADIUS * 0.2;
       grounded = true;
-      console.log('Hole completion triggered by proximity. horiz=', horizDist.toFixed(3));
+      console.log('Hole completion triggered by proximity. horiz=', horizDist.toFixed(3), 'speedHoriz=', speedHoriz.toFixed(3), 'approachDot=', approachDot.toFixed(3));
 
       setTimeout(() => {
         const proceed = window.confirm('Level complete. Continue to next level? Click OK to continue or Cancel to retry this level.');
