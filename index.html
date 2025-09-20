@@ -7,7 +7,44 @@
   <link rel="stylesheet" href="/src/style.css">
 </head>
 <body>
-  <!-- HUD removed, counter is handled entirely by main.js -->
+  <div class="game-state" id="strokes-counter">Strokes: 0</div>
+  <div class="game-state" id="level-display">Level: 1</div>
+
+  <div class="cheer-container"></div>
+
+  <div class="control-panel">
+    <button class="control-button reset-ball" title="Reset Ball">🔄</button>
+    <button class="control-button reset-camera" title="Reset Camera">📹</button>
+    <button class="control-button level-select" title="Select Level">🎯</button>
+    <button class="control-button fullscreen" title="Toggle Fullscreen">⛶</button>
+    <button class="control-button help" title="Help">❓</button>
+  </div>
+
+  <div class="bottom-right-controls">
+    <button class="control-btn music-control" title="Toggle Music">🔊</button>
+    <button class="control-btn screenshot-btn" title="Take Screenshot">📸</button>
+  </div>
+
+  <div class="modal-overlay" style="display: none;"></div>
+  <div class="level-complete-modal" style="display: none;">
+    <div class="trophy-icon">🏆</div>
+    <h2>🎉 Congratulations! 🎉</h2>
+    <p>Level <span class="completed-level">1</span> Complete!</p>
+    
+    <div class="stats-box">
+      <h3>STROKES</h3>
+      <p class="stroke-count">Par 2</p>
+      <p>Best: <span class="best-strokes">1</span> strokes</p>
+    </div>
+    
+    <p>Keep practicing! 💪</p>
+    
+    <div class="modal-buttons">
+      <button class="modal-btn next-btn">▶ Next</button>
+      <button class="modal-btn replay-btn">🔄 Replay</button>
+    </div>
+  </div>
+
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
