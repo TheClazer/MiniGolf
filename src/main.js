@@ -32,15 +32,15 @@ let currentLevelIndex = 0;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x7faed6);
 
-// HDRI Environment Setup (currently disabled)
+// HDRI Environment Setup
 const hdriLoader = new EXRLoader();
 function loadHDREnvironment() {
     hdriLoader.load('/assets/Textures/HDRI/sunny_country_road_4k.exr', 
         function(texture) {
             texture.mapping = THREE.EquirectangularReflectionMapping;
             scene.environment = texture;
-            // Uncomment to use as background
-            // scene.background = texture;
+            // Use as background for full environment
+            scene.background = texture;
         },
         function(xhr) {
             console.log((xhr.loaded / xhr.total * 100) + '% loaded');
@@ -50,8 +50,8 @@ function loadHDREnvironment() {
         }
     );
 }
-// Uncomment to enable HDRI
-// loadHDREnvironment();
+// Enable HDRI environment
+loadHDREnvironment();
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 1000);
 const cameraOffset = new THREE.Vector3(0, 1.6, 3.0);
@@ -901,9 +901,6 @@ screenshotBtn.addEventListener('click', () => {
     // Show UI elements again
     uiElements.forEach(el => el.style.display = '');
 });
-
-// Enable HDRI background
-loadHDREnvironment();
 
 // start
 loadLevel(0);
