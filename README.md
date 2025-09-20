@@ -9,31 +9,31 @@ This project is part of **CloneFest 2025 — Reimagining a C-based Minigolf Clas
 ## ✨ Features
 
 - **3D Scene & Rendering**
-  - Fully interactive 3D golf course rendered in Three.js.
-  - Custom `.glb` golf hole model loaded dynamically.
-  - Ambient and directional lighting for realism.
+  - Interactive 3D golf courses rendered in Three.js.
+  - Multiple `.glb` holes (`hole1.glb`, `hole2.glb`, `hole3.glb`) loaded dynamically.
+  - Ambient + directional lighting for realistic shading.
 
 - **Golf Ball Physics**
-  - Realistic sphere physics: gravity, friction, velocity, and restitution (bounce).
-  - Triangle-level collision detection against course geometry (no teleporting over walls).
-  - Ball stays grounded and reacts naturally to walls and slopes.
+  - Realistic physics: gravity, friction, velocity, restitution (bounce).
+  - Triangle-level collision detection (no wall clipping).
+  - Special handling for **loops** (level 3): reduced friction + uphill assist for smoother climbs.
 
 - **Player Interaction**
-  - **Drag-to-Aim**: Click and drag anywhere near the ball to aim a shot.
-  - **Shot Power**: Power bar visualized by a line that changes from yellow → red as drag length increases.
-  - **Opposite Direction Launch**: Ball shoots in the opposite direction of the drag for intuitive control.
-  - Configurable max drag distance and shot strength.
+  - **Drag-to-Aim**: Click near the ball (within its diameter) to start aiming.
+  - **Shot Power**: Visualized by a cylinder that changes color (green → yellow → red) and thickness.
+  - **Opposite Direction Launch**: Pull back and release to shoot forward.
+  - Configurable shot strength and drag tolerance.
 
 - **Camera System**
-  - OrbitControls with **rotation, zoom, and pan**.
-  - Camera follows the ball smoothly while still allowing rotation.
-  - Prevents camera from going below the ground plane.
+  - Smooth ball-following camera.
+  - OrbitControls: rotate, zoom, pan.
+  - Prevents camera from clipping into the ground.
 
 - **Gameplay & UI**
-  - Stroke counter displayed in the corner of the screen.
-  - Win detection: reaching the `hole_end` point shows a popup (“You won!”).
-  - Lose condition: ball falling out of bounds resets to start.
-  - Smooth user experience with clear visual feedback.
+  - Single HUD counter (top-left) showing **Level** and **Strokes**.
+  - After each hole, popup shows: *“You took X strokes”*.
+  - Win detection: reaching `hole_end` triggers level completion.
+  - Lose condition: falling out of bounds resets ball to start.
 
 ---
 
@@ -43,21 +43,16 @@ This project is part of **CloneFest 2025 — Reimagining a C-based Minigolf Clas
 
 MiniGolf/
 ├── public/
-
 │   └── assets/
-
-│       └── hole1.glb         # 3D course model
-
+│       ├── hole1.glb        # Level 1 course
+│       ├── hole2.glb        # Level 2 course
+│       └── hole3.glb        # Level 3 with 360° loop
 ├── src/
-
-│   └── main.js               # Core game logic
-
-├── index.html
-
+│   ├── main.js              # Core game logic
+│   └── style.css            # Styling
+├── index.html               # Entry point
 ├── package.json
-
 ├── vite.config.js
-
 └── README.md
 
 ````
@@ -84,7 +79,7 @@ npm install
 npm run dev
 ```
 
-Open the shown URL (usually `http://localhost:5173/`) in your browser.
+Open the shown URL (usually `http://localhost:5173/`).
 
 ### 4. Build for production
 
@@ -102,42 +97,41 @@ npm run preview
 
 ## 🕹️ Controls
 
-* **Left Mouse Button + Drag** → Aim and set power.
+* **Left Mouse Button + Drag near ball** → Aim and set power
 
-  * The further you drag, the stronger the shot.
-  * Line indicator shows direction & power (yellow → red).
+  * Pull further = stronger shot.
+  * Cylinder indicator shows color (green → yellow → red) and thickness.
 * **Release Mouse Button** → Shoot the ball.
-* **Mouse Scroll** → Zoom camera in/out.
-* **Right Click + Drag** → Rotate camera around the ball.
-* **Shift + Drag** → Pan the camera.
+* **Mouse Scroll** → Zoom camera.
+* **Right Click + Drag** → Rotate camera.
+* **Shift + Drag** → Pan camera.
 
 ---
 
-## ✅ Requirements Implemented (from Problem Statement)
+## ✅ Requirements Implemented
 
-* Three.js scene with lighting and camera.
-* Load a 3D course hole model.
-* Interactive golf ball with simplified physics (friction, gravity, bounce).
-* Stroke counter with UI overlay.
-* Goal detection (hole reached).
-* OrbitControls for full camera control.
-* Clear user feedback during aiming.
+* Multi-level support (`hole1`, `hole2`, `hole3`).
+* Advanced physics with friction, bounce, gravity.
+* Stroke counter with clean UI overlay.
+* Hole detection (with high-speed capture fix).
+* Loop climbing mechanics.
+* Camera follow system with OrbitControls.
 
 ---
 
 ## 🌟 Future Enhancements
 
-* Add multiple levels (multi-hole support).
+* More challenging levels & obstacles.
 * Score tracking across levels.
-* Advanced terrain (ramps, slopes, curved surfaces).
-* Database + authentication for persistent scoring.
+* Leaderboards & persistent scoring with database.
+* Sound effects and visual polish.
 
 ---
 
 ## 🛠 Tech Stack
 
 * **Three.js** – 3D rendering
-* **Vite** – Dev server and bundler
+* **Vite** – Dev server & bundler
 * **JavaScript (ES Modules)** – Core logic
 
 ---
