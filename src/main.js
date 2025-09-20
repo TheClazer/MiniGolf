@@ -2,6 +2,11 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
+
+// Audio initialization
+const backgroundMusic = new Audio('/assets/Music/music.mp3');
+backgroundMusic.loop = true;
 
 const BALL_RADIUS = 0.021335;
 const HOLE_RADIUS = 0.053975;
@@ -26,6 +31,27 @@ let currentLevelIndex = 0;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x7faed6);
+
+// HDRI Environment Setup (currently disabled)
+const hdriLoader = new EXRLoader();
+function loadHDREnvironment() {
+    hdriLoader.load('/assets/Textures/HDRI/sunny_country_road_4k.exr', 
+        function(texture) {
+            texture.mapping = THREE.EquirectangularReflectionMapping;
+            scene.environment = texture;
+            // Uncomment to use as background
+            // scene.background = texture;
+        },
+        function(xhr) {
+            console.log((xhr.loaded / xhr.total * 100) + '% loaded');
+        },
+        function(error) {
+            console.error('Error loading HDRI:', error);
+        }
+    );
+}
+// Uncomment to enable HDRI
+// loadHDREnvironment();
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 1000);
 const cameraOffset = new THREE.Vector3(0, 1.6, 3.0);
@@ -66,19 +92,88 @@ let levelCompletePending = false;
 
 let strokes = 0;
 
-// single status element showing level and strokes
-const statusEl = document.createElement('div');
-statusEl.style.position = 'fixed';
-statusEl.style.left = '12px';
-statusEl.style.top = '12px';
-statusEl.style.padding = '6px 10px';
-statusEl.style.background = 'rgba(0,0,0,0.5)';
-statusEl.style.color = '#fff';
-statusEl.style.fontFamily = 'monospace';
-statusEl.style.zIndex = 9999;
-statusEl.style.whiteSpace = 'pre';
-statusEl.innerText = `Level: ${currentLevelIndex + 1}\nStrokes: ${strokes}`;
-document.body.appendChild(statusEl);
+// Game state elements are now in the HTML
+const strokesCounter = document.getElementById('strokes-counter');
+const levelDisplay = document.getElementById('level-display');
+
+// Control buttons
+const musicControl = document.querySelector('.music-control');
+const resetBallBtn = document.querySelector('.reset-ball');
+const resetCameraBtn = document.querySelector('.reset-camera');
+const levelSelectBtn = document.querySelector('.level-select');
+const fullscreenBtn = document.querySelector('.fullscreen');
+const helpBtn = document.querySelector('.help');
+
+// Initialize game state displays
+function updateGameStateDisplays() {
+    strokesCounter.textContent = `Strokes: ${strokes}`;
+    levelDisplay.textContent = `Level: ${currentLevelIndex + 1}`;
+}
+
+// Music control
+let isMusicPlaying = false;
+musicControl.addEventListener('click', () => {
+    if (isMusicPlaying) {
+        backgroundMusic.pause();
+        musicControl.textContent = '🔇';
+    } else {
+        backgroundMusic.play();
+        musicControl.textContent = '🔊';
+    }
+    isMusicPlaying = !isMusicPlaying;
+});
+
+// Reset ball button
+resetBallBtn.addEventListener('click', () => {
+    onLose();
+    strokes++;
+    updateGameStateDisplays();
+});
+
+// Reset camera button
+resetCameraBtn.addEventListener('click', () => {
+    camera.position.copy(ballMesh.position).add(cameraOffset);
+    controls.target.copy(ballMesh.position);
+    controls.update();
+});
+
+// Level select button
+levelSelectBtn.addEventListener('click', () => {
+    const maxLevel = LEVELS.length;
+    const level = prompt(`Choose your challenge! Level 1-${maxLevel}`);
+    const levelNum = parseInt(level);
+    if (!isNaN(levelNum) && levelNum >= 1 && levelNum <= maxLevel) {
+        loadLevel(levelNum - 1);
+    } else {
+        alert('Invalid level number!');
+    }
+});
+
+// Fullscreen button
+fullscreenBtn.addEventListener('click', () => {
+    if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen();
+    } else {
+        document.exitFullscreen();
+    }
+});
+
+// Help button
+helpBtn.addEventListener('click', () => {
+    alert(
+        'Game Controls:\n\n' +
+        '1. Click and drag the ball to aim and set power\n' +
+        '2. Release to shoot\n' +
+        '3. Use mouse/touch to rotate camera\n' +
+        '4. Scroll to zoom in/out\n\n' +
+        'Button Controls:\n' +
+        '🔄 - Reset ball position\n' +
+        '📹 - Reset camera view\n' +
+        '🎯 - Select level\n' +
+        '⛶ - Toggle fullscreen\n' +
+        '🔊 - Toggle music\n'
+    );
+});
 
 const loader = new GLTFLoader();
 
@@ -371,6 +466,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
     velocity.copy(shotDir.multiplyScalar((dragLen / maxDrag) * MAX_SHOT_SPEED));
     strokes += 1;
     updateStatusUI();
+    showCheerNotification();
     grounded = false;
   } else {
     activePointerId = null;
@@ -659,17 +755,9 @@ function physicsStep(dt) {
       grounded = true;
       console.log('Hole completion triggered by proximity. horiz=', horizDist.toFixed(3), 'speedHoriz=', speedHoriz.toFixed(3), 'approachDot=', approachDot.toFixed(3));
 
-      // show strokes and then confirm proceed/retry
+      // Show completion modal
       setTimeout(() => {
-        window.alert(`You took ${strokes} strokes.`);
-        const proceed = window.confirm('Level complete. Continue to next level? Click OK to continue or Cancel to retry this level.');
-        if (proceed) {
-          const next = currentLevelIndex + 1;
-          if (next < LEVELS.length) loadLevel(next);
-          else { window.alert('All levels completed.'); loadLevel(currentLevelIndex); }
-        } else {
-          loadLevel(currentLevelIndex, true);
-        }
+        showLevelCompleteModal();
       }, 120);
     }
   }
@@ -700,6 +788,47 @@ function updateCameraFollow() {
 function onWindowResize() { camera.aspect = window.innerWidth / window.innerHeight; renderer.setSize(window.innerWidth, window.innerHeight); camera.updateProjectionMatrix(); }
 window.addEventListener('resize', onWindowResize);
 
+// Cheering system
+const cheerMessages = [
+    "🎯 Nice Shot!",
+    "💫 Amazing!",
+    "🌟 Great Shot!",
+    "🎮 Skillful!",
+    "⭐ Fantastic!",
+    "🏌️ Pro Move!",
+    "🎪 Spectacular!",
+    "🎨 Beautiful Shot!",
+    "🎯 Perfect Aim!",
+    "🚀 Powerful Shot!"
+];
+
+const cheerContainer = document.querySelector('.cheer-container');
+let lastCheerIndex = -1;
+
+function showCheerNotification() {
+    // Get a random message (different from the last one)
+    let randomIndex;
+    do {
+        randomIndex = Math.floor(Math.random() * cheerMessages.length);
+    } while (randomIndex === lastCheerIndex);
+    lastCheerIndex = randomIndex;
+    
+    const message = cheerMessages[randomIndex];
+    
+    // Create notification element
+    const notification = document.createElement('div');
+    notification.className = 'cheer-notification';
+    notification.textContent = message;
+    
+    // Add to container
+    cheerContainer.appendChild(notification);
+    
+    // Remove after animation completes
+    setTimeout(() => {
+        notification.remove();
+    }, 2500); // Matches CSS animation duration
+}
+
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(MAX_DT, clock.getDelta());
@@ -708,10 +837,73 @@ function animate() {
   renderer.render(scene, camera);
 }
 
-// helper to update single status UI
+// helper to update game state displays
 function updateStatusUI() {
-  statusEl.innerText = `Level: ${currentLevelIndex + 1}\nStrokes: ${strokes}`;
+    updateGameStateDisplays();
 }
+
+// Level complete modal handling
+function showLevelCompleteModal() {
+    const modal = document.querySelector('.level-complete-modal');
+    const overlay = document.querySelector('.modal-overlay');
+    const completedLevelSpan = modal.querySelector('.completed-level');
+    const strokeCountP = modal.querySelector('.stroke-count');
+    const bestStrokesSpan = modal.querySelector('.best-strokes');
+    
+    completedLevelSpan.textContent = currentLevelIndex + 1;
+    strokeCountP.textContent = `Par ${strokes}`;
+    bestStrokesSpan.textContent = strokes; // You can implement best strokes tracking if needed
+    
+    modal.style.display = 'block';
+    overlay.style.display = 'block';
+    
+    const nextBtn = modal.querySelector('.next-btn');
+    const replayBtn = modal.querySelector('.replay-btn');
+    
+    nextBtn.onclick = () => {
+        modal.style.display = 'none';
+        overlay.style.display = 'none';
+        const next = currentLevelIndex + 1;
+        if (next < LEVELS.length) {
+            loadLevel(next);
+        } else {
+            alert('All levels completed!');
+            loadLevel(0);
+        }
+    };
+    
+    replayBtn.onclick = () => {
+        modal.style.display = 'none';
+        overlay.style.display = 'none';
+        loadLevel(currentLevelIndex, true);
+    };
+}
+
+// Screenshot functionality
+const screenshotBtn = document.querySelector('.screenshot-btn');
+screenshotBtn.addEventListener('click', () => {
+    // Hide UI elements temporarily
+    const uiElements = document.querySelectorAll('.control-panel, .bottom-right-controls, .game-state');
+    uiElements.forEach(el => el.style.display = 'none');
+    
+    // Render scene
+    renderer.render(scene, camera);
+    
+    // Create screenshot
+    const screenshot = renderer.domElement.toDataURL('image/png');
+    
+    // Create temporary link and trigger download
+    const link = document.createElement('a');
+    link.href = screenshot;
+    link.download = `minigolf-level${currentLevelIndex + 1}-screenshot.png`;
+    link.click();
+    
+    // Show UI elements again
+    uiElements.forEach(el => el.style.display = '');
+});
+
+// Enable HDRI background
+loadHDREnvironment();
 
 // start
 loadLevel(0);
