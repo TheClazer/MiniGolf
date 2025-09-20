@@ -5,16 +5,28 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 const BALL_RADIUS = 0.021335;
 const HOLE_RADIUS = 0.053975;
-// increased shot strength
 const MAX_SHOT_SPEED = 5.0;
-const FRICTION = 1.0;
+const FRICTION = 0.8;
 const STOP_THRESHOLD = 0.02;
 const RESTITUTION = 0.6;
 const GRAVITY = -9.81;
 const MAX_DT = 0.05;
 
+// Completion margin: how close (horizontal) the ball must get to the hole_end
+// to count as completed even if a flag pole is physically blocking exact entry.
+const HOLE_COMPLETE_MARGIN = 0.06;
+
+// picker scale for easier dragging (allows clicking near the ball)
+const PICKER_SCALE = 4.0;
+// additional screen-space tolerance in pixels as fallback
+const SCREEN_TOLERANCE_PX = 80;
+
+const LEVELS = ['hole1.glb', 'hole2.glb'];
+let currentLevelIndex = 0;
+
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xbfe3ff);
+// darker sky to match mood
+scene.background = new THREE.Color(0x7faed6);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 1000);
 const cameraOffset = new THREE.Vector3(0, 1.6, 3.0);
@@ -37,7 +49,7 @@ controls.minPolarAngle = 0.1;
 controls.maxPolarAngle = Math.PI / 2 - 0.05;
 controls.update();
 
-// visual ground
+// fallback ground
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(50, 50), new THREE.MeshPhongMaterial({ color: 0x2c8b2c }));
 ground.rotation.x = -Math.PI / 2; ground.position.y = -0.01; scene.add(ground);
 
@@ -45,10 +57,13 @@ ground.rotation.x = -Math.PI / 2; ground.position.y = -0.01; scene.add(ground);
 let courseScene = null;
 const colliderObjects = [];
 let holeCenter = new THREE.Vector3(3.0, 0.0, -0.03);
-let holeEnd = null;
+let holeEnd = null;           // surface-projected end point (world space)
+let holeCompleteRadius = HOLE_RADIUS + HOLE_COMPLETE_MARGIN;
 let ballStart = new THREE.Vector3(-3.0, 0.0, 0.0);
 let ballMesh = null;
-let ballPicker = null; // invisible slightly-larger mesh for reliable clicking
+let ballPicker = null;
+
+let levelCompletePending = false;
 
 let strokes = 0;
 const strokesEl = document.createElement('div');
@@ -63,63 +78,145 @@ strokesEl.style.zIndex = 9999;
 strokesEl.innerText = `Strokes: ${strokes}`;
 document.body.appendChild(strokesEl);
 
+const levelEl = document.createElement('div');
+levelEl.style.position = 'fixed';
+levelEl.style.right = '12px';
+levelEl.style.top = '12px';
+levelEl.style.padding = '6px 10px';
+levelEl.style.background = 'rgba(0,0,0,0.5)';
+levelEl.style.color = '#fff';
+levelEl.style.fontFamily = 'monospace';
+levelEl.style.zIndex = 9999;
+levelEl.innerText = `Level: ${currentLevelIndex + 1}`;
+document.body.appendChild(levelEl);
+
 const loader = new GLTFLoader();
-loader.load('/assets/hole1.glb', gltf => {
-  scene.add(gltf.scene);
-  courseScene = gltf.scene;
-  courseScene.updateWorldMatrix(true, true);
 
-  gltf.scene.traverse(obj => {
-    if (obj.isMesh) {
-      // treat all meshes as colliders
-      colliderObjects.push(obj);
-    }
-    if (!obj.name) return;
-    const n = obj.name.toLowerCase();
-    if (n === 'hole_center' || n === 'holecenter') {
-      obj.getWorldPosition(holeCenter); obj.visible = false;
-      const dbg = new THREE.Mesh(new THREE.SphereGeometry(0.02, 8, 8), new THREE.MeshBasicMaterial({ color: 0xff0000 }));
-      dbg.position.copy(holeCenter); scene.add(dbg);
-    }
-    if (n === 'hole_end' || n === 'holeend') {
-      const he = new THREE.Vector3(); obj.getWorldPosition(he); holeEnd = he; obj.visible = false;
-    }
-    if (n === 'ball_start' || n === 'ballstart') {
-      obj.getWorldPosition(ballStart); obj.visible = false;
-      const dbg2 = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.01, 0.05), new THREE.MeshBasicMaterial({ color: 0x00ff00 }));
-      dbg2.position.copy(ballStart); scene.add(dbg2);
-    }
-  });
-
-  // create ball
+/* create ball and picker */
+function createBallIfNeeded() {
+  if (ballMesh) return;
   const mat = new THREE.MeshStandardMaterial({ metalness: 0.2, roughness: 0.6 });
   ballMesh = new THREE.Mesh(new THREE.SphereGeometry(BALL_RADIUS, 32, 32), mat);
+  ballMesh.castShadow = true;
+  ballMesh.receiveShadow = true;
   scene.add(ballMesh);
-  ballMesh.position.copy(ballStart);
 
-  // place exactly on ground under start if possible
-  const tr = new THREE.Raycaster(ballStart.clone().setY(ballStart.y + 1), new THREE.Vector3(0, -1, 0));
-  const hits = tr.intersectObject(courseScene, true);
-  ballMesh.position.y = hits.length ? hits[0].point.y + BALL_RADIUS : ballStart.y + BALL_RADIUS;
-
-  // create invisible picker slightly larger than ball to make clicks reliable across sphere surface
-  const pickerGeom = new THREE.SphereGeometry(BALL_RADIUS * 1.25, 8, 8);
+  // larger invisible picker so dragging works when clicking near ball
+  const pickerGeom = new THREE.SphereGeometry(BALL_RADIUS * PICKER_SCALE, 12, 12);
   const pickerMat = new THREE.MeshBasicMaterial({ visible: false });
   ballPicker = new THREE.Mesh(pickerGeom, pickerMat);
   scene.add(ballPicker);
-  ballPicker.position.copy(ballMesh.position);
+}
 
-  velocity.set(0, 0, 0);
-  grounded = true;
+/* dispose previous course scene */
+function disposeCourseScene() {
+  if (!courseScene) return;
+  courseScene.traverse(c => {
+    if (c.geometry) c.geometry.dispose();
+    if (c.material) {
+      if (Array.isArray(c.material)) c.material.forEach(m => { try { m.dispose(); } catch (e) {} });
+      else try { c.material.dispose(); } catch (e) {}
+    }
+  });
+  try { scene.remove(courseScene); } catch (e) {}
+  courseScene = null;
+  colliderObjects.length = 0;
+  holeEnd = null;
+  levelCompletePending = false;
+  holeCompleteRadius = HOLE_RADIUS + HOLE_COMPLETE_MARGIN;
+}
 
-  camera.position.copy(ballMesh.position).add(cameraOffset);
-  controls.target.copy(ballMesh.position);
-  controls.update();
+/* robust level loader: projects ball_start and ball_end to visible surface */
+function loadLevel(index, restart = false) {
+  if (index < 0 || index >= LEVELS.length) {
+    console.warn('level index out of range', index);
+    return;
+  }
 
-  animate();
-}, undefined, e => console.error('GLTF load error', e));
+  currentLevelIndex = index;
+  levelEl.innerText = `Level: ${currentLevelIndex + 1}`;
+  disposeCourseScene();
 
-/* physics */
+  const path = '/assets/' + LEVELS[index];
+  loader.load(path, gltf => {
+    courseScene = gltf.scene;
+    scene.add(courseScene);
+
+    // ensure matrices updated before sampling world positions
+    courseScene.updateMatrixWorld(true);
+
+    // defaults
+    holeCenter.set(3.0, 0.0, -0.03);
+    holeEnd = null;
+    ballStart.set(-3.0, 0.0, 0.0);
+
+    // collect meshes first so raycasts hit the visible geometry
+    courseScene.traverse(obj => {
+      if (obj.isMesh) colliderObjects.push(obj);
+    });
+
+    // now find named empties
+    courseScene.traverse(obj => {
+      if (!obj.name) return;
+      const n = obj.name.toLowerCase();
+      if (n === 'hole_center' || n === 'holecenter') {
+        obj.getWorldPosition(holeCenter);
+        obj.visible = false;
+      }
+      if (n === 'ball_start' || n === 'ballstart') {
+        obj.getWorldPosition(ballStart);
+        obj.visible = false;
+      }
+      if (n === 'hole_end' || n === 'holeend' || n === 'ball_end' || n === 'ballend') {
+        // project the empty to the visible surface under it
+        const tmp = new THREE.Vector3(); obj.getWorldPosition(tmp);
+        const downFrom = tmp.clone().setY(tmp.y + 2.0);
+        const rc = new THREE.Raycaster(downFrom, new THREE.Vector3(0, -1, 0));
+        const hits = rc.intersectObject(courseScene, true);
+        if (hits.length) {
+          // store the surface point (world space)
+          holeEnd = hits[0].point.clone();
+        } else {
+          // fallback to empty's world pos
+          holeEnd = tmp.clone();
+        }
+        obj.visible = false;
+      }
+    });
+
+    // compute completion radius optionally per-level (keeps stable behavior)
+    holeCompleteRadius = Math.max(HOLE_RADIUS + HOLE_COMPLETE_MARGIN, HOLE_RADIUS * 0.9);
+
+    createBallIfNeeded();
+
+    // place ball at start and snap to visible surface under start
+    ballMesh.position.copy(ballStart);
+    const downCaster = new THREE.Raycaster(ballStart.clone().setY(ballStart.y + 2.0), new THREE.Vector3(0, -1, 0));
+    const hits = downCaster.intersectObject(courseScene, true);
+    ballMesh.position.y = hits.length ? hits[0].point.y + BALL_RADIUS : ballStart.y + BALL_RADIUS;
+
+    if (ballPicker) ballPicker.position.copy(ballMesh.position);
+
+    velocity.set(0, 0, 0);
+    grounded = true;
+
+    strokes = 0;
+    strokesEl.innerText = `Strokes: ${strokes}`;
+
+    camera.position.copy(ballMesh.position).add(cameraOffset);
+    controls.target.copy(ballMesh.position);
+    controls.update();
+
+    computeCourseBounds();
+
+    if (holeEnd) console.log('holeEnd surface at', holeEnd.toArray());
+    else console.log('no holeEnd found in this level');
+  }, undefined, e => {
+    console.error('GLTF load error', e);
+  });
+}
+
+/* --- physics --- */
 let velocity = new THREE.Vector3();
 const ray = new THREE.Raycaster();
 const clock = new THREE.Clock();
@@ -127,11 +224,12 @@ let grounded = false;
 let groundNormal = new THREE.Vector3(0, 1, 0);
 let courseBounds = null;
 function computeCourseBounds() { if (!courseScene) return; courseBounds = new THREE.Box3().setFromObject(courseScene); }
+
 function onLose() {
   velocity.set(0, 0, 0);
   if (ballMesh && ballStart) {
     ballMesh.position.copy(ballStart);
-    const tr = new THREE.Raycaster(ballStart.clone().setY(ballStart.y + 1), new THREE.Vector3(0, -1, 0));
+    const tr = new THREE.Raycaster(ballStart.clone().setY(ballStart.y + 2.0), new THREE.Vector3(0, -1, 0));
     const hits = tr.intersectObject(courseScene, true);
     ballMesh.position.y = hits.length ? hits[0].point.y + BALL_RADIUS : ballStart.y + BALL_RADIUS;
   }
@@ -144,9 +242,24 @@ let isAiming = false;
 let aimStart = new THREE.Vector3();
 let aimLine = null;
 let activePointerId = null;
-// decreased max drag length
 const maxDrag = 1.0;
-let aimLineMaterial = new THREE.LineBasicMaterial({ color: 0xffff00, linewidth: 2 });
+const INITIAL_RADIUS = 0.03;
+const MIN_RADIUS = 0.008;
+
+function createAimCylinder(p1, p2, radius, colorHex) {
+  const dir = new THREE.Vector3().subVectors(p2, p1);
+  let length = dir.length();
+  if (length < 0.0001) length = 0.0001;
+  const geom = new THREE.CylinderGeometry(radius, radius, length, 8, 1, true);
+  geom.translate(0, length / 2, 0);
+  const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(colorHex), metalness: 0.1, roughness: 0.6, transparent: false });
+  const mesh = new THREE.Mesh(geom, mat);
+  const up = new THREE.Vector3(0, 1, 0);
+  const q = new THREE.Quaternion().setFromUnitVectors(up, dir.clone().normalize());
+  mesh.applyQuaternion(q);
+  mesh.position.copy(p1);
+  return mesh;
+}
 
 function getMouseGroundIntersection(clientX, clientY, y = 0) {
   const mouse = new THREE.Vector2((clientX / window.innerWidth) * 2 - 1, -(clientY / window.innerHeight) * 2 + 1);
@@ -157,13 +270,24 @@ function getMouseGroundIntersection(clientX, clientY, y = 0) {
   return p;
 }
 
-// use ballPicker for robust hit detection
+// improved hit test: ray intersects invisible larger picker, or screen-space distance to ball center is small
 function pointerHitsBall(clientX, clientY) {
-  if (!ballPicker) return false;
+  if (!ballPicker || !ballMesh) return false;
   const mouse = new THREE.Vector2((clientX / window.innerWidth) * 2 - 1, -(clientY / window.innerHeight) * 2 + 1);
   ray.setFromCamera(mouse, camera);
+
+  // primary: actual picker geometry intersection
   const ints = ray.intersectObject(ballPicker, false);
-  return ints.length > 0;
+  if (ints.length > 0) return true;
+
+  // secondary fallback: screen-space distance from mouse to ball projection
+  const proj = ballMesh.position.clone().project(camera);
+  const screenX = (proj.x + 1) / 2 * window.innerWidth;
+  const screenY = (-proj.y + 1) / 2 * window.innerHeight;
+  const dx = screenX - clientX;
+  const dy = screenY - clientY;
+  const distPx = Math.sqrt(dx * dx + dy * dy);
+  return distPx <= SCREEN_TOLERANCE_PX;
 }
 
 renderer.domElement.addEventListener('pointerdown', (e) => {
@@ -184,19 +308,33 @@ renderer.domElement.addEventListener('pointermove', (e) => {
     const cur = getMouseGroundIntersection(e.clientX, e.clientY, ballMesh.position.y);
     const dragVec = cur.clone().sub(aimStart);
     const dragLen = Math.min(maxDrag, dragVec.length());
-    const dir = dragVec.clone().normalize().multiplyScalar(dragLen);
+    const dirVec = dragVec.clone().normalize().multiplyScalar(dragLen);
+
     const p1 = ballMesh.position.clone();
-    const p2 = ballMesh.position.clone().add(dir.setY(0));
+    const p2 = ballMesh.position.clone().add(dirVec.setY(0));
+
+    const frac = dragLen / maxDrag;
+    const col = new THREE.Color();
+    if (frac < 0.5) {
+      const t = frac / 0.5;
+      col.setRGB(t, 1, 0);
+    } else {
+      const t = (frac - 0.5) / 0.5;
+      col.setRGB(1, 1 - t, 0);
+    }
+
+    const newRadius = INITIAL_RADIUS - (INITIAL_RADIUS - MIN_RADIUS) * frac;
+
     if (!aimLine) {
-      const geom = new THREE.BufferGeometry().setFromPoints([p1, p2]);
-      aimLine = new THREE.Line(geom, aimLineMaterial);
+      aimLine = createAimCylinder(p1, p2, newRadius, col.getHex());
       scene.add(aimLine);
     } else {
-      aimLine.geometry.setFromPoints([p1, p2]);
-      aimLine.geometry.attributes.position.needsUpdate = true;
+      if (aimLine.geometry) aimLine.geometry.dispose();
+      if (aimLine.material) aimLine.material.dispose();
+      scene.remove(aimLine);
+      aimLine = createAimCylinder(p1, p2, newRadius, col.getHex());
+      scene.add(aimLine);
     }
-    const frac = dragLen / maxDrag;
-    aimLineMaterial.color.setRGB(1, 1 - frac, 0);
   }
 });
 
@@ -206,15 +344,13 @@ renderer.domElement.addEventListener('pointerup', (e) => {
     isAiming = false;
     activePointerId = null;
     controls.enabled = true;
-    if (aimLine) { scene.remove(aimLine); aimLine.geometry.dispose(); aimLine = null; aimLineMaterial = new THREE.LineBasicMaterial({ color: 0xffff00, linewidth: 2 }); }
+    if (aimLine) { if (aimLine.geometry) aimLine.geometry.dispose(); if (aimLine.material) aimLine.material.dispose(); scene.remove(aimLine); aimLine = null; }
 
     const worldPoint = getMouseGroundIntersection(e.clientX, e.clientY, ballMesh.position.y);
     const userDrag = worldPoint.clone().sub(aimStart);
     const dragLen = Math.min(maxDrag, userDrag.length());
     if (dragLen <= 0.01) return;
-    // ball goes opposite drag
     const shotDir = aimStart.clone().sub(worldPoint); shotDir.y = 0; shotDir.normalize();
-    // stronger max shot speed applied
     velocity.copy(shotDir.multiplyScalar((dragLen / maxDrag) * MAX_SHOT_SPEED));
     strokes += 1;
     strokesEl.innerText = `Strokes: ${strokes}`;
@@ -223,7 +359,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
     activePointerId = null;
     isAiming = false;
     controls.enabled = true;
-    if (aimLine) { scene.remove(aimLine); aimLine.geometry.dispose(); aimLine = null; aimLineMaterial = new THREE.LineBasicMaterial({ color: 0xffff00, linewidth: 2 }); }
+    if (aimLine) { if (aimLine.geometry) aimLine.geometry.dispose(); if (aimLine.material) aimLine.material.dispose(); scene.remove(aimLine); aimLine = null; }
   }
 });
 
@@ -265,7 +401,6 @@ function closestPointOnTriangle(p, a, b, c, out) {
   return out.copy(ab).multiplyScalar(v).add(ac.clone().multiplyScalar(w)).add(a);
 }
 
-const worldA = new THREE.Vector3(), worldB = new THREE.Vector3(), worldC = new THREE.Vector3();
 const triNormal = new THREE.Vector3(), closest = new THREE.Vector3();
 
 function resolveSphereVsMeshTriangles(mesh) {
@@ -288,15 +423,16 @@ function resolveSphereVsMeshTriangles(mesh) {
         collided = true;
         triNormal.crossVectors(v1.clone().sub(v0), v2.clone().sub(v0)).normalize();
         if (triNormal.y > 0.6) {
-          // ground contact
           const depth = BALL_RADIUS - Math.sqrt(distSq);
           ballMesh.position.add(triNormal.clone().multiplyScalar(depth + 0.001));
-          const vNormalComp = triNormal.clone().multiplyScalar(velocity.dot(triNormal));
+          groundNormal.copy(triNormal);
+          const vNormalComp = groundNormal.clone().multiplyScalar(velocity.dot(groundNormal));
           velocity.sub(vNormalComp);
-          velocity.y = 0;
+          if (ballMesh.position.y < (groundNormal.y * 0.01 + BALL_RADIUS)) {
+            ballMesh.position.y = Math.max(ballMesh.position.y, BALL_RADIUS + 0.001);
+          }
           grounded = true;
         } else {
-          // side collision reflect only if moving into normal
           const vDot = velocity.dot(triNormal);
           if (vDot < 0) {
             const vNormal = triNormal.clone().multiplyScalar(vDot);
@@ -327,9 +463,12 @@ function resolveSphereVsMeshTriangles(mesh) {
         if (triNormal.y > 0.6) {
           const depth = BALL_RADIUS - Math.sqrt(distSq);
           ballMesh.position.add(triNormal.clone().multiplyScalar(depth + 0.001));
-          const vNormalComp = triNormal.clone().multiplyScalar(velocity.dot(triNormal));
+          groundNormal.copy(triNormal);
+          const vNormalComp = groundNormal.clone().multiplyScalar(velocity.dot(groundNormal));
           velocity.sub(vNormalComp);
-          velocity.y = 0;
+          if (ballMesh.position.y < (groundNormal.y * 0.01 + BALL_RADIUS)) {
+            ballMesh.position.y = Math.max(ballMesh.position.y, BALL_RADIUS + 0.001);
+          }
           grounded = true;
         } else {
           const vDot = velocity.dot(triNormal);
@@ -357,7 +496,6 @@ function physicsStep(dt) {
   if (!ballMesh) return;
   dt = Math.min(MAX_DT, dt);
 
-  // update ballPicker position to follow ball (so clicks hit everywhere)
   if (ballPicker) ballPicker.position.copy(ballMesh.position);
 
   // ground raycast
@@ -372,12 +510,12 @@ function physicsStep(dt) {
   if (hitGround) {
     const groundY = hitGround.point.y;
     const distanceToGround = ballMesh.position.y - (groundY + BALL_RADIUS);
+    groundNormal.copy(hitGround.face.normal).transformDirection(hitGround.object.matrixWorld).normalize();
+
     if (distanceToGround <= 0.001 && velocity.y <= 0.01) {
       ballMesh.position.y = groundY + BALL_RADIUS;
-      groundNormal.copy(hitGround.face.normal).transformDirection(hitGround.object.matrixWorld).normalize();
       const normalComp = groundNormal.clone().multiplyScalar(velocity.dot(groundNormal));
       velocity.sub(normalComp);
-      velocity.y = 0;
       grounded = true;
     } else grounded = false;
   } else grounded = false;
@@ -389,7 +527,6 @@ function physicsStep(dt) {
 
   if (!courseBounds && courseScene) computeCourseBounds();
 
-  // triangle-based collisions
   for (const mesh of colliderObjects) {
     if (!mesh.geometry) continue;
     resolveSphereVsMeshTriangles(mesh);
@@ -406,22 +543,44 @@ function physicsStep(dt) {
 
   if (velocity.length() < STOP_THRESHOLD) velocity.set(0, 0, 0);
 
-  // hole_center
-  const dx = ballMesh.position.x - holeCenter.x;
-  const dz = ballMesh.position.z - holeCenter.z;
-  const horizDist = Math.hypot(dx, dz);
-  if (horizDist <= HOLE_RADIUS && ballMesh.position.y < (holeCenter.y + 0.05) && velocity.length() < 0.15) {
+  // hole_center capture (unchanged)
+  const dxC = ballMesh.position.x - holeCenter.x;
+  const dzC = ballMesh.position.z - holeCenter.z;
+  const horizDistC = Math.hypot(dxC, dzC);
+  if (horizDistC <= HOLE_RADIUS && ballMesh.position.y < (holeCenter.y + 0.05) && velocity.length() < 0.15) {
     velocity.set(0, 0, 0);
     ballMesh.position.copy(holeCenter); ballMesh.position.y = holeCenter.y - 0.02; grounded = true;
     console.log('SCORED');
   }
 
-  // hole_end win
-  if (holeEnd) {
-    if (ballMesh.position.distanceTo(holeEnd) < 0.12) {
+  // hole_end completion using a minimal distance threshold so flag poles cannot block finishing
+  if (holeEnd && !levelCompletePending) {
+    const dx = ballMesh.position.x - holeEnd.x;
+    const dz = ballMesh.position.z - holeEnd.z;
+    const horizDist = Math.hypot(dx, dz);
+    const SPEED_THRESHOLD = 0.9; // allow small motion but not high-speed flybys
+
+    if (horizDist <= holeCompleteRadius && velocity.length() < SPEED_THRESHOLD) {
+      levelCompletePending = true;
       velocity.set(0, 0, 0);
-      setTimeout(() => window.alert('You won!'), 50);
-      holeEnd = null;
+      // visually place ball near hole center (but don't attempt to pass through flag)
+      ballMesh.position.x = holeEnd.x;
+      ballMesh.position.z = holeEnd.z;
+      // place ball slightly above the hole surface point so it is visible
+      ballMesh.position.y = (holeEnd.y || ballMesh.position.y) + BALL_RADIUS * 0.2;
+      grounded = true;
+      console.log('Hole completion triggered by proximity. horiz=', horizDist.toFixed(3));
+
+      setTimeout(() => {
+        const proceed = window.confirm('Level complete. Continue to next level? Click OK to continue or Cancel to retry this level.');
+        if (proceed) {
+          const next = currentLevelIndex + 1;
+          if (next < LEVELS.length) loadLevel(next);
+          else { window.alert('All levels completed.'); loadLevel(currentLevelIndex); }
+        } else {
+          loadLevel(currentLevelIndex, true);
+        }
+      }, 120);
     }
   }
 
@@ -448,7 +607,7 @@ function updateCameraFollow() {
   controls.update();
 }
 
-function onWindowResize() { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); }
+function onWindowResize() { camera.aspect = window.innerWidth / window.innerHeight; renderer.setSize(window.innerWidth, window.innerHeight); camera.updateProjectionMatrix(); }
 window.addEventListener('resize', onWindowResize);
 
 function animate() {
@@ -458,3 +617,7 @@ function animate() {
   updateCameraFollow();
   renderer.render(scene, camera);
 }
+
+// start
+loadLevel(0);
+animate();
