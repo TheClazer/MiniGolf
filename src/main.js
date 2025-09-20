@@ -65,29 +65,20 @@ let ballPicker = null;
 let levelCompletePending = false;
 
 let strokes = 0;
-const strokesEl = document.createElement('div');
-strokesEl.style.position = 'fixed';
-strokesEl.style.left = '12px';
-strokesEl.style.top = '12px';
-strokesEl.style.padding = '6px 10px';
-strokesEl.style.background = 'rgba(0,0,0,0.5)';
-strokesEl.style.color = '#fff';
-strokesEl.style.fontFamily = 'monospace';
-strokesEl.style.zIndex = 9999;
-strokesEl.innerText = `Strokes: ${strokes}`;
-document.body.appendChild(strokesEl);
 
-const levelEl = document.createElement('div');
-levelEl.style.position = 'fixed';
-levelEl.style.right = '12px';
-levelEl.style.top = '12px';
-levelEl.style.padding = '6px 10px';
-levelEl.style.background = 'rgba(0,0,0,0.5)';
-levelEl.style.color = '#fff';
-levelEl.style.fontFamily = 'monospace';
-levelEl.style.zIndex = 9999;
-levelEl.innerText = `Level: ${currentLevelIndex + 1}`;
-document.body.appendChild(levelEl);
+// single status element showing level and strokes
+const statusEl = document.createElement('div');
+statusEl.style.position = 'fixed';
+statusEl.style.left = '12px';
+statusEl.style.top = '12px';
+statusEl.style.padding = '6px 10px';
+statusEl.style.background = 'rgba(0,0,0,0.5)';
+statusEl.style.color = '#fff';
+statusEl.style.fontFamily = 'monospace';
+statusEl.style.zIndex = 9999;
+statusEl.style.whiteSpace = 'pre';
+statusEl.innerText = `Level: ${currentLevelIndex + 1}\nStrokes: ${strokes}`;
+document.body.appendChild(statusEl);
 
 const loader = new GLTFLoader();
 
@@ -133,7 +124,7 @@ function loadLevel(index, restart = false) {
   }
 
   currentLevelIndex = index;
-  levelEl.innerText = `Level: ${currentLevelIndex + 1}`;
+  updateStatusUI();
   disposeCourseScene();
 
   const path = '/assets/' + LEVELS[index];
@@ -205,8 +196,9 @@ function loadLevel(index, restart = false) {
     velocity.set(0, 0, 0);
     grounded = true;
 
+    // reset strokes on level load
     strokes = 0;
-    strokesEl.innerText = `Strokes: ${strokes}`;
+    updateStatusUI();
 
     camera.position.copy(ballMesh.position).add(cameraOffset);
     controls.target.copy(ballMesh.position);
@@ -378,7 +370,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
     const shotDir = aimStart.clone().sub(worldPoint); shotDir.y = 0; shotDir.normalize();
     velocity.copy(shotDir.multiplyScalar((dragLen / maxDrag) * MAX_SHOT_SPEED));
     strokes += 1;
-    strokesEl.innerText = `Strokes: ${strokes}`;
+    updateStatusUI();
     grounded = false;
   } else {
     activePointerId = null;
@@ -667,7 +659,9 @@ function physicsStep(dt) {
       grounded = true;
       console.log('Hole completion triggered by proximity. horiz=', horizDist.toFixed(3), 'speedHoriz=', speedHoriz.toFixed(3), 'approachDot=', approachDot.toFixed(3));
 
+      // show strokes and then confirm proceed/retry
       setTimeout(() => {
+        window.alert(`You took ${strokes} strokes.`);
         const proceed = window.confirm('Level complete. Continue to next level? Click OK to continue or Cancel to retry this level.');
         if (proceed) {
           const next = currentLevelIndex + 1;
@@ -712,6 +706,11 @@ function animate() {
   if (!isAiming) physicsStep(dt);
   updateCameraFollow();
   renderer.render(scene, camera);
+}
+
+// helper to update single status UI
+function updateStatusUI() {
+  statusEl.innerText = `Level: ${currentLevelIndex + 1}\nStrokes: ${strokes}`;
 }
 
 // start
