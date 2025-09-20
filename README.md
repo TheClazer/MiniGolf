@@ -4,6 +4,21 @@
 A web-based **3D MiniGolf game** built with [Three.js](https://threejs.org/) and [Vite](https://vitejs.dev/).  
 This project is part of **CloneFest 2025 — Reimagining a C-based Minigolf Classic**, where the goal is to port a minigolf experience into the browser with interactive physics, gameplay, and user-friendly controls.
 
+Deployed on **Vercel** → [🎮 Play Now](https://mini-golf-eta.vercel.app/)
+---
+
+---
+
+## 🎮 Use Case: Loading Page Game
+
+This project can also be adapted as a **fun offline/loading screen game** 🔄  
+(similar to the **Chrome dinosaur game** or simple **Flappy Bird clones**).  
+
+👉 It can run in the background while:  
+- A website/app is loading heavy content  
+- Users are offline or facing slow internet  
+- As an **Easter Egg mini-game** to keep users engaged 🎉  
+
 ---
 
 ## ✨ Features
@@ -119,13 +134,14 @@ npm run preview
 
 ---
 
-## 🌟 Future Enhancements
+## 📌  Future Enhancements
+  🎶 Add sound effects & background music
 
-* More challenging levels & obstacles.
-* Score tracking across levels.
-* Leaderboards & persistent scoring with database.
-* Sound effects and visual polish.
+  📱 Mobile/touchscreen support
 
+  🏆 Leaderboard & scoring system
+
+  🎨 More levels with ramps & moving obstacles
 ---
 
 ## 🛠 Tech Stack
@@ -138,7 +154,7 @@ npm run preview
 
 ## 👨‍💻 Author
 
-Built by **TheClazer** for CloneFest 2025.
+Built by **TheClazer**,**Ashitha0409**,**has066** and **ayushranjan28** for CloneFest 2025.
 
 ```
 ```
