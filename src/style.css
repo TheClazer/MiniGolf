@@ -12,3 +12,211 @@ html,body {
   font-family:Arial,Helvetica,sans-serif;
   z-index:10;
 }
+
+/* Control Panel Styles */
+.control-panel {
+  position: absolute;
+  left: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 100;
+}
+
+.control-button {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  color: white;
+  transition: transform 0.2s, background-color 0.2s;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+
+.control-button:hover {
+  transform: scale(1.1);
+}
+
+.control-button:active {
+  transform: scale(0.95);
+}
+
+.reset-ball { background-color: #ff9f40; }
+.reset-camera { background-color: #4095ff; }
+.level-select { background-color: #9f40ff; }
+.fullscreen { background-color: #40ff9f; }
+.help { background-color: #ff4040; }
+
+/* Music and Screenshot Controls */
+.bottom-right-controls {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 100;
+}
+
+.control-btn {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  border: none;
+  background-color: rgba(0, 0, 0, 0.6);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  transition: transform 0.2s, background-color 0.2s;
+}
+
+.control-btn:hover {
+  transform: scale(1.1);
+  background-color: rgba(0, 0, 0, 0.8);
+}
+
+/* Level Complete Modal */
+.level-complete-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  padding: 2rem;
+  border-radius: 1rem;
+  text-align: center;
+  color: white;
+  z-index: 1000;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  min-width: 300px;
+}
+
+.level-complete-modal h2 {
+  font-size: 2rem;
+  margin: 1rem 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.trophy-icon {
+  font-size: 2.5rem;
+  margin-bottom: 1rem;
+}
+
+.stats-box {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 1.5rem;
+  border-radius: 0.75rem;
+  margin: 1.5rem 0;
+}
+
+.modal-buttons {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  margin-top: 1.5rem;
+}
+
+.modal-btn {
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.5rem;
+  border: none;
+  cursor: pointer;
+  font-weight: bold;
+  transition: transform 0.2s;
+}
+
+.modal-btn:hover {
+  transform: scale(1.05);
+}
+
+.next-btn {
+  background: #22c55e;
+  color: white;
+}
+
+.replay-btn {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 999;
+}
+
+/* Game State Display */
+.game-state {
+  position: absolute;
+  padding: 8px 12px;
+  background-color: rgba(0, 0, 0, 0.6);
+  color: white;
+  border-radius: 5px;
+  font-family: Arial, sans-serif;
+}
+
+#strokes-counter {
+  top: 20px;
+  left: 20px;
+}
+
+#level-display {
+  top: 20px;
+  right: 20px;
+}
+
+/* Cheer Notifications */
+.cheer-container {
+  position: fixed;
+  left: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.cheer-notification {
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 18px;
+  opacity: 0;
+  transform: translateX(-100%);
+  animation: slideIn 0.5s forwards, fadeOut 0.5s forwards 2s;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+@keyframes slideIn {
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes fadeOut {
+  to {
+    opacity: 0;
+    transform: translateX(-100%);
+  }
+}
